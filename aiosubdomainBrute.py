@@ -5,6 +5,8 @@ import asyncio
 import aiodns
 import functools
 import pycares
+import string
+import random
 
 
 query_type_map = {'A'     : pycares.QUERY_TYPE_A,
@@ -18,6 +20,8 @@ query_type_map = {'A'     : pycares.QUERY_TYPE_A,
                   'SRV'   : pycares.QUERY_TYPE_SRV,
                   'TXT'   : pycares.QUERY_TYPE_TXT
         }
+
+wildcard_dns_record = ''
 
 
 class DomainInfo(object):
@@ -73,10 +77,13 @@ class DNSResolver(aiodns.DNSResolver):
         if errorno is not None:
             fut.set_exception(DNSError(errorno, pycares.errno.strerror(errorno)))
         else:
-            domain_ip = [r.host for r in result]
-            result = result = DomainInfo(domain = domain, ip = domain_ip)
-            print(result)
-            fut.set_result(result)
+            if result[0].host != wildcard_dns_record:
+                domain_ip = [r.host for r in result]
+                result = DomainInfo(domain = domain, ip = domain_ip)
+                print(result)
+                fut.set_result(result)
+            else:
+                fut.set_result(None)
 
     def query(self, host, qtype):
         # type: (str, str) -> asyncio.Future
@@ -124,7 +131,9 @@ class subnameGetter(object):
 
     def run(self):
         size = self.queue.qsize()
-        print('qsize: {}'.format(size))
+        print('[*] qsize: {}'.format(size))
+        print('[*] test_wildcard_dns_record')
+        self.test_wildcard_dns_record()
 
         for i in range(size):
             task = asyncio.ensure_future(self.dns_query())
@@ -141,6 +150,23 @@ class subnameGetter(object):
         t = self.resolver.query('www.google.com', 'A')
         result = self.loop.run_until_complete(t)
         print(result)
+
+    def test_wildcard_dns_record(self):
+        global wildcard_dns_record
+        ip_dic = {}
+        genrandstr = lambda i: ''.join(random.choices(string.ascii_lowercase + string.digits, k=i))
+        tasks = [asyncio.ensure_future(self.resolver.query(genrandstr(20) + '.' + self.domain, 'A')) for _ in range(6)]
+        reqs = asyncio.gather(*tasks)
+        result = self.loop.run_until_complete(reqs)
+        for r in result:
+            if ip_dic.get(r.ip[0]):
+                ip_dic[r.ip[0]] += 1
+                if ip_dic[r.ip[0]] > 3:
+                    wildcard_dns_record = r.ip[0]
+                    print(f'[*] Found wildcard dns record:{wildcard_dns_record}')
+                    return
+            else:
+                ip_dic[r.ip[0]] = 1
 
     def _load_sub_names(self):
         try:
